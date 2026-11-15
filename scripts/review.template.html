@@ -1,0 +1,46 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>壘球記分台</title><style>
+*{box-sizing:border-box}body{font:16px system-ui;margin:0;background:#f4f5ee;color:#182c26}header,main{max-width:1100px;margin:auto;padding:14px}h1{font-size:24px;margin:4px 0}main{display:grid;grid-template-columns:2fr 1fr;gap:18px}section,aside{min-width:0}video{width:100%;background:#182c26;border-radius:8px}input,select,button{font:inherit;padding:7px;border:1px solid #a5b4ab;border-radius:5px;margin:3px;background:white}button{cursor:pointer}button:focus-visible{outline:3px solid #ba611c}#queue{max-height:65vh;overflow:auto}#queue button{display:block;width:97%;text-align:left}button.active,button.primary{background:#215943;color:white}small{display:block;color:#40554b}#total{font-size:22px;font-weight:bold}label{display:inline-block}#notice{color:#933} @media(max-width:740px){main{grid-template-columns:1fr}#queue{max-height:36vh}}
+</style><header><h1 id="title"></h1><div id="total"></div><small>已登錄得分 · Recorded runs</small></header>
+<main><section><video id="film" controls playsinline></video><div id="current"></div>
+<button id="replay">重播片段 Replay</button><button id="done">完成並繼續 Reviewed →</button>
+<p>在影片中停在發生時間，再登錄結果。每個片段可登錄多次。</p>
+<label>進攻方 <select id="side"><option value="team">我隊</option><option value="opponent">對手</option></select></label>
+<label>局數 <input id="inning" type="number" min="1" value="1" style="width:4em"></label>
+<label>結果 <select id="result"><option>一壘安打</option><option>二壘安打</option><option>三壘安打</option><option>全壘打</option><option>出局</option><option>保送</option><option>失誤</option><option>野手選擇</option><option>犧牲打</option><option>跑壘</option><option>其他</option></select></label>
+<label>得分 <input id="runs" type="number" value="0" min="0" max="4" style="width:4em"></label>
+<label>備註 <input id="note" placeholder="球員或其他細節"></label><button class="primary" id="save">登錄此 play</button>
+<p id="notice" role="status"></p><div id="records"></div><button id="csv">匯出記分 CSV</button>
+</section><aside><label>片段 <select id="filter"><option value="all">全部時間</option><option value="likely">疑似 play</option><option value="gap">其餘時間</option></select></label>
+<small>偵測分數 0–100 代表動作與聲音強度，尚未校準為機率。</small><div id="queue"></div></aside></main>
+<script>
+const game=__GAME_DATA__;
+const el=id=>document.getElementById(id), video=el('film'), key='softball-v1-'+game.video+'-'+game.duration;
+const stamp=s=>Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0');
+let state={events:[],reviewed:{}}, index=0, bounded=true;
+try{state=JSON.parse(localStorage.getItem(key))||state}catch{el('notice').textContent='無法讀取先前紀錄，請使用 CSV 備份。'}
+function persist(){try{localStorage.setItem(key,JSON.stringify(state))}catch{el('notice').textContent='瀏覽器無法儲存，離開前請匯出 CSV。'}}
+const label=r=>stamp(r.start)+'–'+stamp(r.end)+' · '+(r.peak===null?'其餘時間':'疑似 play '+r.confidence+'/100');
+function visible(r){return el('filter').value==='all'||(el('filter').value==='gap')===(r.peak===null)}
+function queue(){
+ el('queue').replaceChildren();
+ game.rows.forEach((r,i)=>{if(!visible(r))return;const b=document.createElement('button');b.textContent=(state.reviewed[i]?'✓ ':'')+label(r);b.className=i===index?'active':'';b.onclick=()=>select(i,true);el('queue').append(b)});
+}
+function select(i,play){index=i;bounded=true;video.currentTime=game.rows[i].start;el('current').textContent=label(game.rows[i]);queue();if(play)video.play().catch(()=>{});}
+function ledger(){
+ const total={team:0,opponent:0};el('records').replaceChildren();
+ state.events.sort((a,b)=>a.time-b.time).forEach((e,i)=>{total[e.side]+=e.runs;const p=document.createElement('p');p.textContent=[stamp(e.time),e.inning+'局',e.side==='team'?'我隊':'對手',e.result,'+'+e.runs,e.note].join(' · ');const b=document.createElement('button');b.textContent='刪除';b.onclick=()=>{state.events.splice(i,1);persist();ledger()};p.append(b);el('records').append(p)});
+ el('total').textContent='我隊 '+total.team+'　｜　對手 '+total.opponent;
+}
+el('title').textContent=game.game+' 壘球記分台';video.src=encodeURIComponent(game.video);
+video.onloadedmetadata=()=>select(0,false);
+video.ontimeupdate=()=>{if(bounded&&!video.paused&&video.currentTime>=game.rows[index].end){video.pause();bounded=false}};
+el('replay').onclick=()=>select(index,true);
+el('filter').onchange=()=>{const i=game.rows.findIndex(visible);if(i>=0)select(i,false);else queue()};
+el('done').onclick=()=>{state.reviewed[index]=true;persist();const next=game.rows.findIndex((r,i)=>i>index&&visible(r)&&!state.reviewed[i]);if(next>=0)select(next,true);else queue()};
+el('save').onclick=()=>{if(!video.readyState||!el('runs').value||!el('inning').value||!el('runs').checkValidity()||!el('inning').checkValidity())return;
+ const time=Number(video.currentTime.toFixed(2));const r=game.rows[index];
+ state.events.push({time,side:el('side').value,inning:Number(el('inning').value),result:el('result').value,runs:Number(el('runs').value),note:el('note').value,confidence:time>=r.start&&time<=r.end?r.confidence:null});persist();ledger();el('note').value='';el('runs').value=0};
+el('csv').onclick=()=>{const cols=['time','side','inning','result','runs','note','confidence'];const quote=x=>'"'+String(x??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';const lines=[cols,...state.events.map(e=>cols.map(k=>e[k]))];const url=URL.createObjectURL(new Blob(['\ufeff'+lines.map(l=>l.map(quote).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=game.game+'-scorebook.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+queue();ledger();
+</script></html>
